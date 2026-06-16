@@ -195,7 +195,7 @@ async function doAnalyse(file) {
     
     if(d.status === 'NEVER_SEEN') banner.classList.add('ok');
     else if(d.status === 'ALREADY_REGISTERED') banner.classList.add('info');
-    else { banner.classList.add('err'); isError = true; }
+    else banner.classList.add('warn'); // MODIFIED_SUSPECTED: indícios a rever, não certeza
     
     const titleEl = document.getElementById('verdictTitle');
     titleEl.textContent = d.verdict || d.status;
@@ -210,21 +210,25 @@ async function doAnalyse(file) {
     const hashEl = document.getElementById('analyseHashDisplay');
     scrambleText(hashEl, a.fileHash || '—', 1500);
     
-    const signals = a.suspicionSignals || [];
-    let signalsHtml = signals.length ? 
-      signals.map(s=>`<div style="color:var(--err); padding:8px; background:rgba(255,0,60,0.1); border-left: 2px solid var(--err); border-radius:0 4px 4px 0; margin-bottom:8px; font-family:'JetBrains Mono'; font-size:12px; text-transform:uppercase;">> ERROR: ${s}</div>`).join('') : 
-      '<div style="color:var(--ok);font-size:13px; font-family:\'JetBrains Mono\'">> STATUS: SEGURO. NENHUM SINAL DE ADULTERAÇÃO.</div>';
-      
-    if (signals.length) {
-      signalsHtml += `<div class="hex-dump">
-0x00000000  4D 5A 90 00 03 00 00 00  04 00 00 00 FF FF 00 00  |MZ..............|
-0x00000010  B8 00 00 00 00 00 00 00  40 00 00 00 00 00 00 00  |........@.......|
-0x00000020  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-0x00000030  00 00 00 00 00 00 00 00  00 00 00 00 80 00 00 00  |................|
-0x00000040  0E 1F BA 0E 00 B4 09 CD  21 B8 01 4C CD 21 54 68  |........!..L.!Th|
-0x00000050  <span style="color:var(--err)">[CORRUPTED SECTOR DETECTED - METADATA MISMATCH]</span>
-</div>`;
-    }
+    // Usa os sinais estruturados (com severidade) quando disponíveis;
+    // senão cai para a lista de mensagens (retrocompat).
+    const details = (a.signalDetails && a.signalDetails.length)
+      ? a.signalDetails
+      : (a.suspicionSignals || []).map(s => ({ severity: 'suspeito', message: s }));
+
+    const SEV = {
+      info:     { color: 'var(--muted)', label: 'INFO'  },
+      suspeito: { color: 'var(--warn)',  label: 'REVER' },
+      forte:    { color: 'var(--err)',   label: 'ALERTA'},
+    };
+
+    const signalsHtml = details.length
+      ? details.map(s => {
+          const sv = SEV[s.severity] || SEV.suspeito;
+          return `<div style="color:${sv.color}; padding:8px; background:rgba(255,255,255,0.03); border-left: 2px solid ${sv.color}; border-radius:0 4px 4px 0; margin-bottom:8px; font-family:'JetBrains Mono'; font-size:12px;"><b>[${sv.label}]</b> ${s.message}</div>`;
+        }).join('')
+      : '<div style="color:var(--ok);font-size:13px; font-family:\'JetBrains Mono\'">> STATUS: SEM INDÍCIOS RELEVANTES NOS METADADOS.</div>';
+
     document.getElementById('aSignalsBody').innerHTML = signalsHtml;
     
     // Render Entropy Chart

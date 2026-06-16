@@ -16,11 +16,20 @@ import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
 import exifr from 'exifr';
+import { z } from 'zod';
 import { authenticateToken } from '../middleware/auth';
+import { validateBody, sha256Hex } from '../middleware/validate';
 import { consensusManager } from '../services/consensusManager';
 import { demsEvents } from '../server';
 import { localStorage } from '../storage/LocalStorageProvider';
 import { encryptBuffer } from '../crypto/fileCipher';
+
+const transferSchema = z.object({
+    fileHash:  sha256Hex,
+    toEmail:   z.email('email de destino inválido'),
+    publicKey: z.string().optional(),
+    signature: z.string().optional(),
+});
 
 // ── Google Drive setup (optional — fail gracefully) ───────────
 let drive: ReturnType<typeof google.drive> | null = null;
@@ -260,29 +269,20 @@ export function createEvidenceRouter(): Router {
     router.post(
         '/transfer',
         authenticateToken,
+        validateBody(transferSchema),
         async (req: Request, res: Response) => {
             try {
                 const { fileHash, toEmail } = req.body;
-                if (!fileHash || !toEmail) {
-                    return res.status(400).json({ error: 'BadRequest', message: 'fileHash and toEmail are required' });
-                }
 
                 const actor = req.user;
                 if (!actor) {
                     return res.status(401).json({ error: 'Unauthorized', message: 'Missing user context' });
                 }
 
-                // Get original block data to copy fileName and size
-                const block = await consensusManager.getBlockByHash(fileHash);
-                if (!block) {
-                    // Try to find ANY block that refers to this fileHash
-                    // We might need to search all blocks. For now, assume fileHash exists.
-                }
-
-                // We will rely on the UI to send the fileName and fileSize if we want, or we can fetch them.
-                // Let's just do a generic search using getBlocks if getBlockByHash fails (since fileHash might not be the block hash)
-                const allBlocks = await consensusManager.getBlocks(0, 1000);
-                const originalBlock = allBlocks.find(b => b.fileHash === fileHash && b.action === 'EVIDENCE_UPLOAD');
+                // Procura o bloco de upload original por fileHash (query
+                // indexada por fileHash — não varre a cadeia inteira).
+                const matches = await consensusManager.findAllBlocksByFileHash(fileHash);
+                const originalBlock = matches.find(b => b.action === 'EVIDENCE_UPLOAD');
 
                 if (!originalBlock) {
                     return res.status(404).json({ error: 'NotFound', message: 'Original evidence not found in blockchain' });

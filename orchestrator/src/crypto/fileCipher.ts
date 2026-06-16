@@ -1,12 +1,21 @@
 // ============================================================
-// Incorrupt / DEMS — Cifra de ficheiros (AES-256-CBC)
+// Incorrupt / DEMS — Cifra de ficheiros (AES-256-GCM)
 //
 // Centraliza a cifra/decifra usada pelo storage e pelo backup
-// no Drive (antes a chave era derivada em dois sítios). O IV
-// (16 bytes) é guardado como prefixo do ciphertext.
+// no Drive (antes a chave era derivada em dois sítios).
+//
+// GCM é cifra AUTENTICADA: dá confidencialidade E integridade
+// num só passo. Ao contrário do CBC (maleável), qualquer
+// adulteração do ciphertext é detetada na decifra (a auth tag
+// não bate → erro). Substitui o AES-256-CBC anterior.
+//
+// Formato do blob: iv(12) || authTag(16) || ciphertext
 // ============================================================
 
 import crypto from 'crypto';
+
+const IV_LEN  = 12;   // nonce recomendado para GCM
+const TAG_LEN = 16;   // tag de autenticação GCM (128 bits)
 
 export function getEncryptionKey(): Buffer {
     const envKey = process.env.ENCRYPTION_KEY;
@@ -22,14 +31,21 @@ export function getEncryptionKey(): Buffer {
 }
 
 export function encryptBuffer(plain: Buffer): Buffer {
-    const iv     = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', getEncryptionKey(), iv);
-    return Buffer.concat([iv, cipher.update(plain), cipher.final()]);
+    const iv     = crypto.randomBytes(IV_LEN);
+    const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv);
+    const ct     = Buffer.concat([cipher.update(plain), cipher.final()]);
+    const tag    = cipher.getAuthTag();
+    return Buffer.concat([iv, tag, ct]);
 }
 
 export function decryptBuffer(encrypted: Buffer): Buffer {
-    const iv         = encrypted.subarray(0, 16);
-    const ciphertext = encrypted.subarray(16);
-    const decipher   = crypto.createDecipheriv('aes-256-cbc', getEncryptionKey(), iv);
+    if (encrypted.length < IV_LEN + TAG_LEN) {
+        throw new Error('Blob cifrado demasiado curto (corrompido).');
+    }
+    const iv         = encrypted.subarray(0, IV_LEN);
+    const tag        = encrypted.subarray(IV_LEN, IV_LEN + TAG_LEN);
+    const ciphertext = encrypted.subarray(IV_LEN + TAG_LEN);
+    const decipher   = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(), iv);
+    decipher.setAuthTag(tag);   // adulteração → final() lança
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }

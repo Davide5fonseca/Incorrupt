@@ -124,13 +124,19 @@ divergente e ausência de colisão de `blockIndex` em commits concorrentes.
 
 ## Limitações conhecidas / trabalho futuro
 
-- **Sem reconciliação ao reentrar.** Um nó que esteve offline durante commits
-  volta atrasado e não se ressincroniza automaticamente (não há anti-entropia).
-  A verificação cross-node deteta a divergência, mas a recuperação é manual.
-- **Análise forense é heurística.** A deteção de adulteração em PDF baseia-se em
-  sinais (incremental updates, anotações, etc.) e pode dar falsos positivos —
-  ex.: um PDF legitimamente assinado tem incremental updates. Tratar como indício,
-  não como prova.
+- **Reconciliação (anti-entropy).** Um nó que esteve offline durante commits
+  volta atrasado e **ressincroniza-se automaticamente** ao reentrar: copia os
+  blocos em falta da cadeia canónica (o nó saudável com a cadeia válida mais
+  longa), re-verificando o quorum certificate de cada bloco antes de o aceitar.
+  Há também `POST /api/v1/health/reconcile` para forçar a reconciliação. Um nó
+  bizantino (blocos divergentes) é igualmente realinhado. *Limitação:* a
+  reconciliação corre no reentrar/sob pedido, não há ainda um gossip periódico
+  contínuo entre nós.
+- **Análise forense é heurística.** A deteção de sinais em PDF/imagem é graduada
+  por severidade (`info` neutro · `suspeito` a rever · `forte`): sinais comuns em
+  ficheiros legítimos — incremental updates, presença de `/Sig`, edição num editor —
+  são `info` e **não** disparam alerta de adulteração; só `suspeito`/`forte` o fazem.
+  Ainda assim é indício, não prova.
 - **Timestamp NTP** depende de um serviço externo, com fallback para hora local.
   Para datação forte, considerar um TSA RFC 3161.
 - **Assinatura do utilizador** (ECDSA no browser) é registada mas a verificação

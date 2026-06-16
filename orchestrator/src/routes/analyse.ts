@@ -28,6 +28,19 @@ type AnalysisStatus =
     | 'ALREADY_REGISTERED'
     | 'MODIFIED_SUSPECTED';
 
+// Severidade de cada indício. NUNCA afirmamos adulteração a partir
+// de um só sinal: 'info' é neutro (comum em ficheiros legítimos),
+// 'suspeito' merece revisão, 'forte' é um indício sério. A análise
+// é heurística — indício, não prova.
+type Severity = 'info' | 'suspeito' | 'forte';
+
+interface ForensicSignal {
+    severity: Severity;
+    message:  string;
+}
+
+const RISK_BY_SEVERITY: Record<Severity, number> = { info: 0, suspeito: 1, forte: 2 };
+
 interface FileMetadata {
     name:             string;
     size:             number;
@@ -41,7 +54,8 @@ interface FileMetadata {
     pdfCreationDate?: string | null;
     pdfModDate?:      string | null;
     pdfPageCount?:    number | null;
-    // Sinais de suspeita
+    // Sinais (estruturados + lista de mensagens para retrocompat)
+    signalDetails:    ForensicSignal[];
     suspicionSignals: string[];
 }
 
@@ -94,78 +108,78 @@ export function extractPdfMetadata(buffer: Buffer): Partial<FileMetadata> {
         const pageCountMatch = text.match(/\/N\s+(\d+)/);
         if (pageCountMatch) meta.pdfPageCount = parseInt(pageCountMatch[1]);
 
-        // ── Análise de sinais de suspeita ─────────────────────
-        const signals: string[] = [];
+        // ── Indícios (heurística — indício, não prova) ────────
+        const signals: ForensicSignal[] = [];
+        const add = (severity: Severity, message: string) => signals.push({ severity, message });
 
-        // 1. Criação != Modificação (ficheiro editado após criação)
+        // 1. Criação != Modificação. Comum (qualquer reedição legítima
+        //    altera a ModDate), por isso é apenas suspeito.
         if (meta.pdfCreationDate && meta.pdfModDate) {
             const norm = (d: string) => d.replace(/[^0-9]/g, '').substring(0, 14);
             if (norm(meta.pdfCreationDate) !== norm(meta.pdfModDate)) {
-                signals.push('Data de criação e modificação diferem — ficheiro pode ter sido editado');
+                add('suspeito', 'Datas de criação e modificação diferem: o documento foi alterado após ter sido criado (frequente em documentos legítimos revistos).');
             }
         }
 
-        // 2. Produtor != Criador (convertido/re-exportado)
+        // 2. Produtor != Criador → reprocessado/convertido. Neutro.
         if (meta.pdfCreator && meta.pdfProducer) {
             const creatorLower  = meta.pdfCreator.toLowerCase();
             const producerLower = meta.pdfProducer.toLowerCase();
             const knownEditors = ['acrobat', 'word', 'libreoffice', 'openoffice', 'ghostscript', 'pdfedit', 'pdfill'];
-            const hasEditTool = knownEditors.some(e => producerLower.includes(e) && !creatorLower.includes(e));
-            if (hasEditTool) {
-                signals.push(`Documento re-processado por ferramenta de edição: "${meta.pdfProducer}"`);
+            if (knownEditors.some(e => producerLower.includes(e) && !creatorLower.includes(e))) {
+                add('info', `Reprocessado/convertido por "${meta.pdfProducer}" (comum; por si só não indica adulteração).`);
             }
         }
 
-        // 3. Sem metadados (metadados apagados — prática comum em adulteração)
+        // 3. Sem metadados → pode ser limpeza deliberada ou exportador
+        //    que não os escreve. Neutro.
         if (!meta.pdfCreationDate && !meta.pdfAuthor && !meta.pdfCreator) {
-            signals.push('Metadados ausentes — podem ter sido apagados intencionalmente');
+            add('info', 'Sem metadados de criação: podem ter sido removidos, ou o exportador não os escreve.');
         }
 
-        // 4. Uso de ferramentas de edição conhecidas no produtor
+        // 4. Editores online no produtor. Merecem revisão.
         if (meta.pdfProducer) {
-            const suspectTools = ['pdfescape', 'sejda', 'smallpdf', 'ilovepdf', 'pdfcandy', 'pdffiller'];
-            const found = suspectTools.find(t => meta.pdfProducer!.toLowerCase().includes(t));
+            const onlineTools = ['pdfescape', 'sejda', 'smallpdf', 'ilovepdf', 'pdfcandy', 'pdffiller'];
+            const found = onlineTools.find(t => meta.pdfProducer!.toLowerCase().includes(t));
             if (found) {
-                signals.push(`Ferramenta de edição online detectada: "${meta.pdfProducer}"`);
+                add('suspeito', `Produzido por um editor online ("${meta.pdfProducer}").`);
             }
         }
 
-        // 5. Múltiplos EOF (Incremental Updates / Camadas Sobrepostas / Anotações)
+        // 5. Múltiplos %%EOF (incremental updates). NORMAL em PDFs
+        //    assinados ou revistos — é informativo, não "adulteração".
         const eofCount = (text.match(/%%EOF/g) || []).length;
+        const hasSig   = text.includes('/Sig');
         if (eofCount > 1) {
-            signals.push(`[ADULTERAÇÃO FÍSICA ESTRUTURAL] Detetadas ${eofCount} versões internas do ficheiro (Incremental Updates). Foram colados sublinhados, destaques, caixas de texto ou imagens por cima do documento original.`);
+            add('info', `${eofCount} versões internas (incremental updates): o ficheiro foi atualizado após a versão inicial. Normal em documentos assinados ou revistos.`);
         }
 
-        // 6. Falsificação de Assinatura (/Sig) combinada com Incremental Updates
-        const hasSig = text.includes('/Sig');
-        if (hasSig && eofCount > 1) {
-            signals.push(`[RISCO CRÍTICO] Deteção de blocos de assinatura digital (/Sig) combinados com edição posterior. Possível falsificação.`);
+        // 6. Assinatura digital presente. É garantia, não suspeita —
+        //    e assinar adiciona legitimamente um incremental update.
+        if (hasSig) {
+            add('info', 'Contém um campo de assinatura digital (/Sig).');
         }
 
-        // 7. Deteção de Anotações Visuais e Colagens (Falsificação Física)
-        if (text.includes('/Subtype /Underline') || text.includes('/Subtype/Underline') || text.includes('/Underline')) {
-            signals.push('[ADULTERAÇÃO VISUAL] Adição de traços ou sublinhados por cima do texto original detetada.');
-        }
-        if (text.includes('/Subtype /Highlight') || text.includes('/Subtype/Highlight') || text.includes('/Highlight')) {
-            signals.push('[ADULTERAÇÃO VISUAL] Utilização de marcador/destaque (Highlight) para cobrir ou evidenciar áreas.');
-        }
-        if (text.includes('/Subtype /FreeText') || text.includes('/Subtype/FreeText') || text.includes('/FreeText')) {
-            signals.push('[ADULTERAÇÃO VISUAL] Caixas de texto não originais injetadas sobre o documento.');
-        }
-        if (text.includes('/Subtype /Ink') || text.includes('/Subtype/Ink') || text.includes('/Ink')) {
-            signals.push('[ADULTERAÇÃO VISUAL] Desenhos à mão livre ou rabiscos inseridos no documento.');
-        }
-        if (text.includes('/Subtype /Stamp') || text.includes('/Subtype/Stamp') || text.includes('/Stamp')) {
-            signals.push('[ADULTERAÇÃO VISUAL] Colagem de "Carimbo" detetada. Imagens ou prints externos foram sobrepostos ao ficheiro original.');
-        }
-        if (text.includes('/Subtype /Square') || text.includes('/Subtype /Circle') || text.includes('/Subtype /Polygon')) {
-            signals.push('[ADULTERAÇÃO VISUAL] Formas geométricas desenhadas para rasurar ou ocultar secções do documento.');
-        }
-        if (text.includes('/Subtype /Widget') || text.includes('/Subtype/Widget')) {
-            signals.push('[ANOMALIA DE CONTEÚDO] Campos de formulário interativos preenchidos ou alterados pós-exportação.');
+        // 7. Anotações sobre o documento. Podem ser revisão legítima
+        //    ou ocultação — merecem revisão (suspeito), não veredicto.
+        const annotations: Array<[string[], string]> = [
+            [['/Underline'], 'sublinhados'],
+            [['/Highlight'], 'destaques (highlight)'],
+            [['/FreeText'],  'caixas de texto'],
+            [['/Ink'],       'desenhos à mão livre'],
+            [['/Stamp'],     'carimbos ou imagens sobrepostas'],
+            [['/Square', '/Circle', '/Polygon'], 'formas geométricas'],
+            [['/Widget'],    'campos de formulário'],
+        ];
+        const foundAnnot = annotations
+            .filter(([keys]) => keys.some(k => text.includes(k)))
+            .map(([, label]) => label);
+        if (foundAnnot.length > 0) {
+            add('suspeito', `Anotações adicionadas sobre o documento (${foundAnnot.join(', ')}): conteúdo acrescentado após a criação — pode ser revisão legítima ou ocultar texto.`);
         }
 
-        (meta as any).suspicionSignals = signals;
+        meta.signalDetails    = signals;
+        (meta as any).suspicionSignals = signals.map(s => s.message);
 
     } catch {
         // Parsing falhou — continua sem metadados
@@ -176,22 +190,24 @@ export function extractPdfMetadata(buffer: Buffer): Partial<FileMetadata> {
 
 // ── Extrator Forense de Imagens ───────────────────────────────
 export function extractImageMetadata(buffer: Buffer): Partial<FileMetadata> {
-    const meta: Partial<FileMetadata> = { suspicionSignals: [] };
-    const signals: string[] = [];
-    
-    // Ler buffer como latin1 para pesquisar assinaturas no binário
+    const signals: ForensicSignal[] = [];
+
+    // Ler buffer como latin1 para pesquisar assinaturas no binário.
     const binaryStr = buffer.toString('latin1');
-    
-    // Heurística simples: procurar carimbos de software de edição
-    const suspectEditors = ['Photoshop', 'GIMP', 'Canva', 'Lightroom', 'Paint.NET', 'Pixelmator'];
-    for (const editor of suspectEditors) {
-        if (binaryStr.includes(editor)) {
-            signals.push(`[ALERTA FORENSE] Assinatura térmica de software de manipulação detetada: ${editor}. Risco de adulteração visual.`);
-        }
+
+    // Presença de software de edição: ter sido aberto/exportado num
+    // editor NÃO é adulteração (exportar uma foto do Lightroom é
+    // legítimo). É informativo — indica origem, não manipulação.
+    const editors = ['Photoshop', 'GIMP', 'Canva', 'Lightroom', 'Paint.NET', 'Pixelmator'];
+    const found = editors.filter(e => binaryStr.includes(e));
+    if (found.length > 0) {
+        signals.push({
+            severity: 'info',
+            message: `Editado/exportado com ${found.join(', ')}: indica a origem do ficheiro, não prova adulteração.`,
+        });
     }
-    
-    meta.suspicionSignals = signals;
-    return meta;
+
+    return { signalDetails: signals, suspicionSignals: signals.map(s => s.message) };
 }
 
 // ── Router ────────────────────────────────────────────────────
@@ -226,18 +242,25 @@ export function createAnalyseRouter(): Router {
                 name:             originalName,
                 size:             fileSize,
                 mimeType,
+                signalDetails:    [],
                 suspicionSignals: [],
             };
 
+            let extracted: Partial<FileMetadata> | null = null;
             if (mimeType === 'application/pdf' || originalName.toLowerCase().endsWith('.pdf')) {
-                const pdfMeta = extractPdfMetadata(buffer);
-                Object.assign(fileMeta, pdfMeta);
+                extracted = extractPdfMetadata(buffer);
             } else if (mimeType.startsWith('image/') || originalName.toLowerCase().match(/\.(jpg|jpeg|png|gif)$/)) {
-                const imgMeta = extractImageMetadata(buffer);
-                fileMeta.suspicionSignals.push(...(imgMeta.suspicionSignals || []));
+                extracted = extractImageMetadata(buffer);
             }
+            if (extracted) Object.assign(fileMeta, extracted);
 
-            // 4. Determinar status
+            // 4. Determinar status. Só sinais 'suspeito'/'forte' contam
+            //    para "possível adulteração". Sinais 'info' (incremental
+            //    updates, editor, etc.) são comuns em ficheiros legítimos.
+            const concerning = fileMeta.signalDetails.filter(s => s.severity !== 'info');
+            const maxRisk    = fileMeta.signalDetails.reduce((m, s) => Math.max(m, RISK_BY_SEVERITY[s.severity]), 0);
+            const riskLevel  = (['NONE', 'LOW', 'HIGH'] as const)[maxRisk];
+
             let status: AnalysisStatus;
             let verdict: string;
             let verdictDetail: string;
@@ -247,16 +270,19 @@ export function createAnalyseRouter(): Router {
                 status       = 'ALREADY_REGISTERED';
                 verdict      = '[OK] FICHEIRO JÁ REGISTADO NA BLOCKCHAIN';
                 verdictDetail = `Este ficheiro (ou uma cópia byte-a-byte idêntica) foi registado ${existingBlocks.length}x na blockchain. O seu conteúdo é autêntico e não foi alterado desde o registo.`;
-            } else if (fileMeta.suspicionSignals.length > 0) {
-                // Hash não está na chain E há sinais de adulteração nos metadados
+            } else if (concerning.length > 0) {
+                // Hash não está na chain E há indícios que merecem revisão.
                 status       = 'MODIFIED_SUSPECTED';
-                verdict      = '[AVISO] POSSÍVEL ADULTERAÇÃO DETECTADA';
-                verdictDetail = `Este ficheiro nunca foi registado na blockchain e os seus metadados apresentam ${fileMeta.suspicionSignals.length} sinal(is) de possível alteração. Revê o documento antes de o submeter.`;
+                verdict      = '[AVISO] INDÍCIOS A REVER ANTES DE SUBMETER';
+                verdictDetail = `Este ficheiro não consta da blockchain e os metadados apresentam ${concerning.length} indício(s) que merecem revisão. Heurística — indício, não prova. Confirma o documento antes de o submeter.`;
             } else {
-                // Hash não está na chain, metadados limpos
+                // Hash não está na chain, sem indícios relevantes (pode
+                // ter sinais 'info', que são neutros).
                 status       = 'NEVER_SEEN';
                 verdict      = '[OK] FICHEIRO NOVO — PRONTO PARA SUBMETER';
-                verdictDetail = 'Este ficheiro nunca foi registado nesta blockchain. Não foram detectados sinais de adulteração nos metadados. Podes submetê-lo com confiança.';
+                verdictDetail = fileMeta.signalDetails.length > 0
+                    ? 'Este ficheiro nunca foi registado nesta blockchain. Há apenas sinais informativos (comuns em ficheiros legítimos), sem indício de adulteração.'
+                    : 'Este ficheiro nunca foi registado nesta blockchain. Não foram detetados sinais relevantes nos metadados.';
             }
 
             // 5. Informação de integridade da chain
@@ -298,9 +324,11 @@ export function createAnalyseRouter(): Router {
                         pdfModDate:      fileMeta.pdfModDate  ?? null,
                         pdfPageCount:    fileMeta.pdfPageCount ?? null,
                     },
-                    // Sinais de suspeita encontrados
+                    // Sinais encontrados (lista de mensagens + estruturados)
                     suspicionSignals: fileMeta.suspicionSignals,
-                    suspicionCount:   fileMeta.suspicionSignals.length,
+                    suspicionCount:   concerning.length,
+                    signalDetails:    fileMeta.signalDetails,
+                    riskLevel,
                 },
                 chainIntegrity,
                 analyzedAt: new Date().toISOString(),

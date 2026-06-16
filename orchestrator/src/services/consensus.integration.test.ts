@@ -63,6 +63,27 @@ test('os 4 nós estão consistentes entre si', async () => {
     assert.equal(report.divergentNodes.length, 0);
 });
 
+test('um nó offline durante commits ressincroniza-se ao voltar (anti-entropy)', async () => {
+    // Abate o nó 2 (índice 1). Sobram 3 nós saudáveis = quórum exacto.
+    await consensusManager.killNode(1);
+
+    // Commits enquanto o nó 2 está offline → fica atrasado em 2 blocos.
+    await consensusManager.broadcastAndCommit(entry('r1.pdf', 'hash_r1'));
+    await consensusManager.broadcastAndCommit(entry('r2.pdf', 'hash_r2'));
+
+    // Revive → o catch-up automático copia os blocos em falta.
+    await consensusManager.reviveNode(1);
+
+    // O nó voltou alinhado com a cadeia canónica.
+    const report = await consensusManager.verifyAcrossNodes();
+    assert.equal(report.consistent, true, 'o nó revivido devia estar consistente com a maioria');
+
+    const integTarget = await consensusManager.verifyChainIntegrity(1);
+    const integRef    = await consensusManager.verifyChainIntegrity(0);
+    assert.equal(integTarget.valid, true);
+    assert.equal(integTarget.totalBlocks, integRef.totalBlocks, 'o nó revivido devia ter todos os blocos');
+});
+
 // ── A partir daqui adultera-se a cadeia de propósito ──────────
 
 test('verifyAcrossNodes deteta o nó cujo hash diverge da maioria', async () => {

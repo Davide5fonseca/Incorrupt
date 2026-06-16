@@ -22,9 +22,9 @@ services:
     environment:
       - NODE_ENV=production
       - DB_HOST=postgres_db
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=secure_pass
-      - POSTGRES_DB=dems_orchestrator
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD em falta no .env}
+      - POSTGRES_DB=${POSTGRES_DB:-dems_orchestrator}
     ports:
       - "8888:8080"
     networks:
@@ -44,99 +44,66 @@ services:
         condition: service_started
       audit_node_4:
         condition: service_started
-      mongo-init:
-        condition: service_completed_successfully
     restart: on-failure
 
   # ── PostgreSQL (Auth DB) ───────────────────────────────────
   postgres_db:
     image: postgres:15
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=secure_pass
-      - POSTGRES_DB=dems_orchestrator
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD em falta no .env}
+      - POSTGRES_DB=${POSTGRES_DB:-dems_orchestrator}
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./db-init/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
       - audit_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d dems_orchestrator"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-dems_orchestrator}"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # ── Audit Node 1 ──────────────────────────────────────────
+  # ── Audit Nodes (BFT fan-out) ──────────────────────────────
+  # Cada nó é um mongod STANDALONE e INDEPENDENTE. NÃO formam um
+  # replica set: se formassem, o driver encaminharia todas as
+  # ligações para o primary e os 4 "nós" seriam a mesma cópia —
+  # o que anularia a verificação cross-node. O ConsensusManager
+  # liga-se a cada um separadamente e replica por consenso (quorum
+  # certificate Ed25519), não por replicação do Mongo.
   audit_node_1:
     image: mongo:6.0
-    command: ["--replSet", "rs0", "--bind_ip_all"]
+    command: ["--bind_ip_all"]
     volumes:
       - node1_data:/data/db
     networks:
       - audit_net
     restart: unless-stopped
 
-  # ── Audit Node 2 ──────────────────────────────────────────
   audit_node_2:
     image: mongo:6.0
-    command: ["--replSet", "rs0", "--bind_ip_all"]
+    command: ["--bind_ip_all"]
     volumes:
       - node2_data:/data/db
     networks:
       - audit_net
     restart: unless-stopped
 
-  # ── Audit Node 3 ──────────────────────────────────────────
   audit_node_3:
     image: mongo:6.0
-    command: ["--replSet", "rs0", "--bind_ip_all"]
+    command: ["--bind_ip_all"]
     volumes:
       - node3_data:/data/db
     networks:
       - audit_net
     restart: unless-stopped
 
-  # ── Audit Node 4 ──────────────────────────────────────────
-  # REQ: 3f+1 (f=1) → 4 nós permitem tolerar 1 nó bizantino.
+  # 3f+1 (f=1) → 4 nós permitem tolerar 1 nó bizantino.
   audit_node_4:
     image: mongo:6.0
-    command: ["--replSet", "rs0", "--bind_ip_all"]
+    command: ["--bind_ip_all"]
     volumes:
       - node4_data:/data/db
     networks:
       - audit_net
     restart: unless-stopped
-
-  # ── MongoDB Replica Set Initialiser (one-shot) ─────────────
-  # REQ-02: Bootstraps the rs0 replica set so all 3 nodes are
-  # aware of each other. Runs once and exits.
-  # The ConsensusManager treats them as INDEPENDENT connections
-  # (BFT fan-out) not as a replica set from Mongoose's perspective.
-  mongo-init:
-    image: mongo:6.0
-    networks:
-      - audit_net
-    depends_on:
-      - audit_node_1
-      - audit_node_2
-      - audit_node_3
-      - audit_node_4
-    # Wait for all nodes to be ready, then initialise the replica set
-    entrypoint: >
-      bash -c "
-        echo '⏳ Waiting for audit nodes...' &&
-        sleep 10 &&
-        mongosh --host audit_node_1:27017 --eval '
-          rs.initiate({
-            _id: \"rs0\",
-            members: [
-              { _id: 0, host: \"audit_node_1:27017\" },
-              { _id: 1, host: \"audit_node_2:27017\" },
-              { _id: 2, host: \"audit_node_3:27017\" },
-              { _id: 3, host: \"audit_node_4:27017\" }
-            ]
-          })
-        ' &&
-        echo '✅ Replica set rs0 initialised.'
-      "
-    restart: "no"

@@ -10,9 +10,19 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
+import { z } from 'zod';
 import { authenticateToken, requireRole } from '../middleware/auth';
+import { validateBody, sha256Hex } from '../middleware/validate';
 import { consensusManager } from '../services/consensusManager';
 import { extractPdfMetadata, extractImageMetadata } from './analyse';
+
+const auditLogSchema = z.object({
+    fileHash:     sha256Hex,
+    fileName:     z.string().min(1, 'fileName obrigatório'),
+    actionDetail: z.string().optional(),
+    publicKey:    z.string().optional(),
+    signature:    z.string().optional(),
+});
 
 // Roles with read access to the chain explorer
 const CHAIN_READERS = ['Investigador', 'Perito', 'Juiz', 'Admin', 'Utilizador'] as const;
@@ -150,12 +160,9 @@ export function createChainRouter(): Router {
 
     // ── POST /api/v1/chain/audit-log ──────────────────────────
     // Regista o acesso (leitura/verificação) de um ficheiro na blockchain
-    router.post('/audit-log', authenticateToken, async (req: Request, res: Response) => {
+    router.post('/audit-log', authenticateToken, validateBody(auditLogSchema), async (req: Request, res: Response) => {
         try {
             const { fileHash, fileName, actionDetail } = req.body;
-            if (!fileHash || !fileName) {
-                return res.status(400).json({ error: 'MissingFields', message: 'fileHash e fileName são obrigatórios.' });
-            }
 
             const actor = req.user;
             if (!actor) return res.status(401).json({ error: 'Unauthorized' });

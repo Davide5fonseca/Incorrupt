@@ -13,6 +13,11 @@ import { Pool } from 'pg';
 import { EventEmitter } from 'events';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
+import { validateBody } from './middleware/validate';
+
+const nodeIndexRequired = z.object({ nodeIndex: z.number().int().min(0) });
+const reconcileSchema   = z.object({ nodeIndex: z.number().int().min(0).optional() });
 
 // ── Global event bus (real-time SSE) ─────────────────────────
 export const demsEvents = new EventEmitter();
@@ -28,6 +33,37 @@ import { createAnalyseRouter }  from './routes/analyse';
 const app     = express();
 const PORT    = process.env.PORT || 8888;
 const IS_LOCAL = process.env.LOCAL_DEV === 'true';
+
+// ── Validação de segredos (falha-alto em produção) ─────────────
+// Em produção NÃO toleramos segredos em falta nem o default de dev:
+// um JWT_SECRET previsível deixa qualquer pessoa forjar tokens, e
+// uma ENCRYPTION_KEY ausente cifra as provas com uma chave conhecida.
+function validateProductionSecrets(): void {
+    if (IS_LOCAL) return;
+
+    const errors: string[] = [];
+
+    const jwt = process.env.JWT_SECRET;
+    if (!jwt || jwt === 'dems_local_dev_secret') {
+        errors.push('JWT_SECRET em falta ou igual ao default de dev. Gera um: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
+    } else if (jwt.length < 32) {
+        errors.push('JWT_SECRET demasiado curto (mínimo 32 chars).');
+    }
+
+    const enc = process.env.ENCRYPTION_KEY;
+    if (!enc) {
+        errors.push('ENCRYPTION_KEY em falta. Gera uma: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+    } else if (!/^[0-9a-fA-F]{64}$/.test(enc)) {
+        errors.push('ENCRYPTION_KEY tem de ser hex de 64 chars (32 bytes).');
+    }
+
+    if (errors.length > 0) {
+        console.error('\n[ERRO FATAL] Configuração de segurança inválida para produção:');
+        errors.forEach(e => console.error(`   • ${e}`));
+        console.error('   (em desenvolvimento, define LOCAL_DEV=true)\n');
+        process.exit(1);
+    }
+}
 
 // ── CORS ───────────────────────────────────────────────
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || `http://localhost:${process.env.PORT || 8888}`)
@@ -118,7 +154,9 @@ function setupRoutes(pgPool: Pool | null) {
         res.setHeader('Content-Type',  'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection',    'keep-alive');
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        // CORS é tratado pelo middleware cors() global (respeita a
+        // allowlist CORS_ORIGINS). Não forçar '*' aqui — fura a config
+        // e é inválido em conjunto com credentials.
         res.flushHeaders();
 
         const send = (event: string, data: object) => {
@@ -202,12 +240,9 @@ function setupRoutes(pgPool: Pool | null) {
     });
 
     // ── Chaos Monkey ───────────────────────────────────────
-    app.post('/api/v1/health/kill-node', async (req, res) => {
+    app.post('/api/v1/health/kill-node', validateBody(nodeIndexRequired), async (req, res) => {
         try {
             const index = req.body.nodeIndex;
-            if (typeof index !== 'number') {
-                return res.status(400).json({ error: 'nodeIndex is required' });
-            }
             await consensusManager.killNode(index);
             
             // Emit to connected clients
@@ -219,12 +254,9 @@ function setupRoutes(pgPool: Pool | null) {
         }
     });
 
-    app.post('/api/v1/health/revive-node', async (req, res) => {
+    app.post('/api/v1/health/revive-node', validateBody(nodeIndexRequired), async (req, res) => {
         try {
             const index = req.body.nodeIndex;
-            if (typeof index !== 'number') {
-                return res.status(400).json({ error: 'nodeIndex is required' });
-            }
             await consensusManager.reviveNode(index);
             
             // Emit to connected clients
@@ -233,6 +265,26 @@ function setupRoutes(pgPool: Pool | null) {
             res.status(200).json({ status: 'OK', message: `Nó ${index + 1} ressuscitado.` });
         } catch (err: any) {
             res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ── Reconciliação (anti-entropy) ────────────────────────
+    // Sem body: reconcilia todos os nós saudáveis. Com { nodeIndex }:
+    // reconcilia só esse nó contra a cadeia canónica.
+    app.post('/api/v1/health/reconcile', validateBody(reconcileSchema), async (req, res) => {
+        try {
+            const index = req.body?.nodeIndex;
+            if (typeof index === 'number') {
+                const report = await consensusManager.reconcileNode(index);
+                (app as any).emit_dems('node_reconciled', report);
+                return res.status(200).json({ status: 'OK', report });
+            }
+            const reports = await consensusManager.reconcileAll();
+            reports.filter(r => !r.alreadyConsistent)
+                   .forEach(r => (app as any).emit_dems('node_reconciled', r));
+            return res.status(200).json({ status: 'OK', reports });
+        } catch (err: any) {
+            res.status(503).json({ error: err.message });
         }
     });
 
@@ -271,6 +323,9 @@ async function bootstrap(): Promise<void> {
     console.log('║   Orquestrador v1.0                          ║');
     console.log('╚══════════════════════════════════════════════╝');
     console.log('');
+
+    // Aborta cedo se os segredos de produção estiverem mal configurados.
+    validateProductionSecrets();
 
     if (IS_LOCAL) {
         console.log('MODO LOCAL ACTIVO (LOCAL_DEV=true)');

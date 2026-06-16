@@ -99,6 +99,16 @@ export interface CrossNodeReport {
     conflicts: Array<{ blockIndex: number; majorityHash: string; dissenters: string[] }>;
 }
 
+export interface ReconcileReport {
+    targetNode:        string;
+    referenceNode:     string | null;
+    alreadyConsistent: boolean;
+    copied:            number;   // blocos copiados para o alvo
+    removed:           number;   // blocos divergentes/órfãos removidos do alvo
+    totalBlocks:       number;   // tamanho da cadeia canónica de referência
+    skippedUncertified: number;  // blocos da referência sem quorum cert válido (não propagados)
+}
+
 export class ConsensusError extends Error {
     public readonly successCount:  number;
     public readonly requiredCount: number;
@@ -552,6 +562,121 @@ class ConsensusManager {
         };
     }
 
+    // ── Reconciliação (anti-entropy) ──────────────────────────
+    // Um nó que esteve offline volta atrasado; um nó bizantino tem
+    // blocos divergentes. Em ambos os casos, alinhamo-lo à cadeia
+    // CANÓNICA — a do nó saudável com a cadeia válida mais longa —
+    // copiando os blocos em falta/errados. Cada bloco da referência
+    // é RE-VERIFICADO (encadeamento + quorum certificate) antes de
+    // ser propagado: nunca se replica um bloco não certificado.
+    //
+    // Vai pelo mesmo mutex dos commits para não correr em paralelo
+    // com uma escrita.
+    async reconcileNode(targetIndex: number): Promise<ReconcileReport> {
+        const run = this.commitLock.then(() => this._reconcile(targetIndex));
+        this.commitLock = run.then(() => {}, () => {});
+        return run;
+    }
+
+    // Reconcilia todos os nós saudáveis contra a cadeia canónica.
+    async reconcileAll(): Promise<ReconcileReport[]> {
+        const reports: ReconcileReport[] = [];
+        for (let i = 0; i < this.TOTAL_NODES; i++) {
+            if (this.nodeStatus[i]?.healthy && this.models[i]) {
+                reports.push(await this.reconcileNode(i));
+            }
+        }
+        return reports;
+    }
+
+    // Escolhe a referência: o nó saudável (≠ alvo) cuja cadeia é
+    // VÁLIDA e mais longa. Devolve -1 se nenhum servir.
+    private async _pickReference(targetIndex: number): Promise<number> {
+        let ref = -1;
+        let refLen = -1;
+        for (let i = 0; i < this.TOTAL_NODES; i++) {
+            if (i === targetIndex) continue;
+            if (!this.nodeStatus[i]?.healthy || !this.models[i]) continue;
+            try {
+                const integ = await this.verifyChainIntegrity(i);
+                if (integ.valid && integ.totalBlocks > refLen) {
+                    ref = i;
+                    refLen = integ.totalBlocks;
+                }
+            } catch { /* nó ilegível — tenta o próximo */ }
+        }
+        return ref;
+    }
+
+    private async _reconcile(targetIndex: number): Promise<ReconcileReport> {
+        if (targetIndex < 0 || targetIndex >= this.TOTAL_NODES) {
+            throw new Error('Índice de nó inválido.');
+        }
+        const target = this.models[targetIndex];
+        const targetName = this.nodeStatus[targetIndex]?.name ?? `audit_node_${targetIndex + 1}`;
+        if (!this.nodeStatus[targetIndex]?.healthy || !target) {
+            throw new Error(`Nó ${targetIndex + 1} offline — não pode ser reconciliado.`);
+        }
+
+        const refIndex = await this._pickReference(targetIndex);
+        if (refIndex === -1) {
+            throw new Error('Sem nó de referência íntegro para reconciliar.');
+        }
+        const refName = this.nodeStatus[refIndex].name;
+
+        const refDocs = await this.models[refIndex].find().sort({ blockIndex: 1 }).lean().exec() as any[];
+        const tgtRows = await target.find().select('blockIndex currentHash').sort({ blockIndex: 1 }).lean().exec() as any[];
+        const tgtByIndex = new Map<number, string>(tgtRows.map(r => [r.blockIndex, r.currentHash]));
+
+        const trusted = this.trustedKeys;
+        let copied = 0;
+        let removed = 0;
+        let skippedUncertified = 0;
+
+        for (const rdoc of refDocs) {
+            // Re-verifica o quorum certificate antes de propagar (blocos v4).
+            if ((rdoc.schemaVersion ?? 1) >= 4) {
+                const validSigs = countValidSignatures(rdoc.currentHash, rdoc.nodeSignatures, trusted);
+                if (validSigs < this.QUORUM) { skippedUncertified++; continue; }
+            }
+
+            const tgtHash = tgtByIndex.get(rdoc.blockIndex);
+            if (tgtHash === rdoc.currentHash) continue;   // já correto
+
+            // Divergente no mesmo índice → remove a cópia errada do alvo.
+            if (tgtHash !== undefined) {
+                await target.deleteOne({ blockIndex: rdoc.blockIndex });
+                removed++;
+            }
+
+            // Insere o bloco canónico (sem o _id da referência).
+            const { _id, ...clean } = rdoc;
+            await target.create(clean);
+            copied++;
+        }
+
+        // Remove órfãos do alvo para lá da ponta canónica (fork bizantino).
+        const refMax = refDocs.length ? refDocs[refDocs.length - 1].blockIndex : -1;
+        const orphans = await target.deleteMany({ blockIndex: { $gt: refMax } });
+        removed += orphans.deletedCount ?? 0;
+
+        const alreadyConsistent = copied === 0 && removed === 0;
+        if (!alreadyConsistent) {
+            console.log(`[RECONCILE] ${targetName} ← ${refName}: +${copied} copiados, -${removed} removidos` +
+                (skippedUncertified ? `, ${skippedUncertified} ignorados (sem quórum)` : ''));
+        }
+
+        return {
+            targetNode: targetName,
+            referenceNode: refName,
+            alreadyConsistent,
+            copied,
+            removed,
+            totalBlocks: refDocs.length,
+            skippedUncertified,
+        };
+    }
+
     // ── Helpers ───────────────────────────────────────────────
     private _healthyModel(preferredNode = 0): Model<IAuditEntry> {
         const order = [preferredNode, ...Array.from({ length: this.TOTAL_NODES }, (_, i) => i).filter(i => i !== preferredNode)];
@@ -626,6 +751,17 @@ class ConsensusManager {
             console.error(`[CHAOS MONKEY] Erro ao restaurar nó ${index + 1}: ${err.message}`);
             this.nodeStatus[index].lastError = err.message;
             throw err;
+        }
+
+        // Catch-up automático: o nó volta atrasado e ressincroniza-se
+        // com a cadeia canónica (best-effort — não falha o revive).
+        try {
+            const rep = await this.reconcileNode(index);
+            if (!rep.alreadyConsistent) {
+                console.log(`[CHAOS MONKEY] Nó ${index + 1} ressincronizado (+${rep.copied}/-${rep.removed}).`);
+            }
+        } catch (err: any) {
+            console.warn(`[AVISO] [Reconcile] Catch-up do nó ${index + 1} falhou: ${err.message}`);
         }
     }
 }
