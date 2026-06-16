@@ -32,7 +32,7 @@ test('commit gera bloco com quorum certificate válido (>=3 nós)', async () => 
     assert.equal(r.success, true);
     assert.ok(r.consensusCount >= 3, `esperava >=3 assinaturas, obteve ${r.consensusCount}`);
     // As assinaturas certificam mesmo o hash do bloco:
-    const trusted = new Set(mgr.identities.map((i: any) => i.publicKeyPem));
+    const trusted = new Set<string>(mgr.identities.map((i: any) => i.publicKeyPem as string));
     assert.ok(countValidSignatures(r.currentHash, r.nodeSignatures, trusted) >= 3);
 });
 

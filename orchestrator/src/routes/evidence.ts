@@ -19,6 +19,8 @@ import exifr from 'exifr';
 import { authenticateToken } from '../middleware/auth';
 import { consensusManager } from '../services/consensusManager';
 import { demsEvents } from '../server';
+import { localStorage } from '../storage/LocalStorageProvider';
+import { encryptBuffer } from '../crypto/fileCipher';
 
 // ── Google Drive setup (optional — fail gracefully) ───────────
 let drive: ReturnType<typeof google.drive> | null = null;
@@ -44,18 +46,6 @@ const upload = multer({
     limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB (alinhado com /analyse)
 });
 
-// ── AES-256 key from environment ─────────────────────────────
-function getEncryptionKey(): Buffer {
-    const envKey = process.env.ENCRYPTION_KEY;
-    if (envKey) {
-        // Expect a 64-char hex string (32 bytes)
-        return Buffer.from(envKey, 'hex');
-    }
-    // Fallback for dev: derive from passphrase — NOT for production
-    console.warn('[AVISO] [AES] ENCRYPTION_KEY not set — using derived key (DEV ONLY)');
-    return crypto.scryptSync('dems_default_dev_key', 'dems_salt_v1', 32);
-}
-
 export function createEvidenceRouter(): Router {
     const router = Router();
 
@@ -65,7 +55,7 @@ export function createEvidenceRouter(): Router {
         '/upload',
         authenticateToken,
         upload.single('evidence_file'),
-        (req: Request, res: Response) => {
+        async (req: Request, res: Response) => {
             if (!req.file) {
                 return res.status(400).json({ error: 'MissingFile', message: 'evidence_file field is required.' });
             }
@@ -78,20 +68,33 @@ export function createEvidenceRouter(): Router {
 
             const trackingId   = `trk_${Date.now()}_${actor.id}`;
 
-            // ── Compute fileHash SYNCHRONOUSLY before responding ──
-            // This is the cryptographic proof of the file's content.
-            // It will be embedded in the blockchain block.
+            // ── SHA-256 do ficheiro (prova de conteúdo, vai para o bloco) ──
             const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
             const fileSize = fileBuffer.length;
 
-            // Respond immediately with the fileHash so the client can
-            // store it as a receipt — even before the chain commit.
+            // ── Armazenamento OBRIGATÓRIO (1.ª classe) ────────────
+            // Guarda a prova cifrada ANTES de confirmar. Se isto falha,
+            // o upload falha — não adianta registar na cadeia uma prova
+            // que depois não se consegue recuperar.
+            try {
+                await localStorage.put(fileHash, fileBuffer);
+            } catch (storeErr: any) {
+                console.error(`[ERRO] [Storage] Falha ao guardar ${fileHash}: ${storeErr.message}`);
+                return res.status(500).json({
+                    error:   'StorageFailed',
+                    message: 'Não foi possível guardar a prova. O registo foi abortado.',
+                });
+            }
+
+            // Prova guardada → responde com o recibo. O commit na cadeia
+            // segue em background (notificado via SSE).
             res.status(202).json({
                 status:      'PROCESSING',
-                message:     'Evidence received. SHA-256 calculated. Committing to blockchain...',
+                message:     'Prova guardada e validada (SHA-256). A registar na cadeia...',
                 tracking_id: trackingId,
                 fileHash,
                 fileSize,
+                storageRef:  `local:${fileHash}`,
                 actor: { id: actor.id, email: actor.email, role: actor.role },
             });
 
@@ -187,13 +190,9 @@ export function createEvidenceRouter(): Router {
                         console.warn(`[AVISO] [IPFS] Upload falhou (não fatal): ${ipfsErr.message}`);
                     }
 
-                    // ── 3. AES-256 + Google Drive — opcional ──────────────
+                    // ── 3. AES-256 + Google Drive — backup opcional ───────
                     try {
-                        const encryptionKey   = getEncryptionKey();
-                        const iv              = crypto.randomBytes(16);
-                        const cipher          = crypto.createCipheriv('aes-256-cbc', encryptionKey, iv);
-                        const ciphertext      = Buffer.concat([cipher.update(fileBuffer), cipher.final()]);
-                        const encryptedBuffer = Buffer.concat([iv, ciphertext]);
+                        const encryptedBuffer = encryptBuffer(fileBuffer);
                         console.log(`[AES-256] Encrypted (${encryptedBuffer.length} bytes).`);
 
                         if (drive) {
@@ -322,6 +321,36 @@ export function createEvidenceRouter(): Router {
                     message: `Custody transferred to ${toEmail}`,
                     block: result
                 });
+            } catch (err: any) {
+                return res.status(500).json({ error: 'InternalServerError', message: err.message });
+            }
+        }
+    );
+
+    // ── GET /api/v1/evidence/:fileHash/download ───────────────
+    // Recupera a prova original a partir do armazenamento. Só
+    // devolve se o fileHash existir mesmo na cadeia (evita servir
+    // ficheiros que não foram registados). Requer autenticação.
+    router.get(
+        '/:fileHash/download',
+        authenticateToken,
+        async (req: Request, res: Response) => {
+            try {
+                const fileHash = req.params.fileHash;
+
+                const block = await consensusManager.findBlockByFileHash(fileHash);
+                if (!block) {
+                    return res.status(404).json({ error: 'NotInChain', message: 'fileHash não consta da cadeia.' });
+                }
+                if (!(await localStorage.has(fileHash))) {
+                    return res.status(404).json({ error: 'NotStored', message: 'Prova registada mas não disponível no armazenamento.' });
+                }
+
+                const data = await localStorage.get(fileHash);   // valida o hash ao ler
+                res.setHeader('Content-Type', 'application/octet-stream');
+                res.setHeader('Content-Disposition', `attachment; filename="${block.fileName}"`);
+                res.setHeader('X-File-Hash', fileHash);
+                return res.status(200).send(data);
             } catch (err: any) {
                 return res.status(500).json({ error: 'InternalServerError', message: err.message });
             }

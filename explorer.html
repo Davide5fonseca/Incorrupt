@@ -224,10 +224,10 @@ function updateChart(blocks) {
       datasets: [{
         label: 'Provas & Acessos',
         data: data,
-        backgroundColor: 'rgba(0, 255, 255, 0.4)',
-        borderColor: '#00ffff',
+        backgroundColor: 'rgba(45, 212, 191, 0.35)',
+        borderColor: '#2dd4bf',
         borderWidth: 1,
-        borderRadius: 2,
+        borderRadius: 4,
       }]
     },
     options: {
@@ -235,8 +235,8 @@ function updateChart(blocks) {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: { beginAtZero: true, grid: { color: 'rgba(0, 255, 255, 0.1)' }, ticks: { color: '#00ffff', stepSize: 1, font: {family: 'Orbitron'} } },
-        x: { grid: { display: false }, ticks: { color: '#00ffff', font: {family: 'Orbitron'} } }
+        y: { beginAtZero: true, grid: { color: 'rgba(45, 212, 191, 0.1)' }, ticks: { color: '#8b97a8', stepSize: 1 } },
+        x: { grid: { display: false }, ticks: { color: '#8b97a8' } }
       }
     }
   });

@@ -3,6 +3,7 @@ orchestrator/node_modules/
 orchestrator/dist/
 orchestrator/.db/
 orchestrator/.keys/
+orchestrator/.storage/
 .env
 google-key.json
 .DS_Store
