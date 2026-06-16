@@ -41,12 +41,20 @@ function toggleTheme() {
 }
 
 // ── AUTH & INIT ──
+// Páginas públicas (não exigem login): login, e a verificação/análise
+// de ficheiros que qualquer cidadão pode usar.
+const PUBLIC_PATHS = ['/login', '/verify', '/analyse'];
+
+function isPublicPage() {
+  return PUBLIC_PATHS.some(p => window.location.pathname.startsWith(p));
+}
+
 function initApp() {
   const token = localStorage.getItem('dems_token');
-  if (!token && !window.location.pathname.includes('/login')) {
-    console.log('Public mode: no auth required');
-    // window.location.href = '/login';
-    // return;
+  if (!token && !isPublicPage()) {
+    // Sem sessão e numa página protegida → vai para o login.
+    window.location.href = '/login';
+    return;
   }
 
   // Restore theme
@@ -75,7 +83,7 @@ function initApp() {
     });
   });
 
-  if (!window.location.pathname.includes('/login')) {
+  if (!window.location.pathname.startsWith('/login')) {
     checkHealth();
     setInterval(checkHealth, 15000);
   }
