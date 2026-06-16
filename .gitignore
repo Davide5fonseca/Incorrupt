@@ -1,0 +1,9 @@
+node_modules/
+orchestrator/node_modules/
+orchestrator/dist/
+orchestrator/.db/
+orchestrator/.keys/
+.env
+google-key.json
+.DS_Store
+*.log
