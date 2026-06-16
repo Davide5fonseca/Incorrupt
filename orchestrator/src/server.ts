@@ -386,4 +386,8 @@ async function bootstrap(): Promise<void> {
     });
 }
 
-bootstrap();
+// Só arranca o servidor quando executado diretamente (node server.js).
+// Em testes, os routers são importados sem bootar o servidor.
+if (require.main === module) {
+    bootstrap();
+}

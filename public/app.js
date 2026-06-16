@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8888/api/v1';
+const BASE = '/api/v1';
 
 // ── TOAST NOTIFICATIONS ──
 function showToast(title, message, type = 'info') {
@@ -12,20 +12,27 @@ function showToast(title, message, type = 'info') {
 
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
-  
+
   let icon = '[!]';
   if(type === 'success') icon = '[OK]';
   if(type === 'error') icon = '[ERRO]';
 
-  toast.innerHTML = `
-    <div class="toast-icon">${icon}</div>
-    <div class="toast-content">
-      <h4>${title}</h4>
-      <p>${message}</p>
-    </div>
-    <div class="toast-progress"></div>
-  `;
+  // Construção via DOM + textContent: o título/mensagem podem conter
+  // texto vindo do servidor — nunca interpolar em innerHTML (XSS).
+  const iconEl = document.createElement('div');
+  iconEl.className = 'toast-icon';
+  iconEl.textContent = icon;
 
+  const content = document.createElement('div');
+  content.className = 'toast-content';
+  const h4 = document.createElement('h4'); h4.textContent = title;
+  const p  = document.createElement('p');  p.textContent  = message;
+  content.append(h4, p);
+
+  const progress = document.createElement('div');
+  progress.className = 'toast-progress';
+
+  toast.append(iconEl, content, progress);
   container.appendChild(toast);
 
   setTimeout(() => {
@@ -38,6 +45,53 @@ function showToast(title, message, type = 'info') {
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light-theme');
   localStorage.setItem('dems_theme', isLight ? 'light' : 'dark');
+}
+
+// ── SIDEBAR (fonte única — injetada em todas as páginas) ──
+// Antes a sidebar estava copiada em 7 ficheiros HTML; qualquer
+// alteração obrigava a editar todos. Agora vive aqui e é injetada
+// num <aside class="sidebar" id="sidebar"></aside>.
+const NAV = [
+  { group: 'Dashboard', items: [
+    { href: '/',         label: 'Upload',             icon: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>' },
+    { href: '/explorer', label: 'Blockchain',         icon: '<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>' },
+  ]},
+  { group: 'Forense', items: [
+    { href: '/verify',   label: 'Verificar Prova',    icon: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>' },
+    { href: '/analyse',  label: 'Análise Prévia',     icon: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' },
+    { href: '/custody',  label: 'Gestão de Custódia', icon: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M15 14l-3 3-3-3"/><path d="M12 17V9"/>' },
+    { href: '/terminal', label: 'Terminal',           icon: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>' },
+    { href: '/chaos',    label: 'Simulador de Falhas', icon: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', danger: true },
+  ]},
+];
+
+function renderSidebar() {
+  const el = document.getElementById('sidebar');
+  if (!el) return;
+  const path = window.location.pathname;
+  const active = (href) => (href === '/' ? path === '/' : path.startsWith(href)) ? ' active' : '';
+  const ico = (paths) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${paths}</svg>`;
+
+  const groups = NAV.map(g => `
+    <div class="nav-lbl">${g.group}</div>
+    <div class="nav">
+      ${g.items.map(it => `<a href="${it.href}" class="nav-btn${active(it.href)}"${it.danger ? ' style="color:#ff4444;"' : ''}>${ico(it.icon)} ${it.label}</a>`).join('')}
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="brand">
+      <div class="brand-inner">
+        <div class="logo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h1>Incorrupt</h1>
+      </div>
+      <button class="theme-toggle" onclick="toggleTheme()" title="Modo Claro/Escuro"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
+    </div>
+    ${groups}
+    <div class="sb-footer spotlight">
+      <div class="user-badge" id="userBadge" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> <span id="userBadgeText"></span></div>
+      <div class="badge off" id="serverBadge"><div class="dot"></div> <span id="serverStatus">A carregar...</span></div>
+      <button class="btn-logout" onclick="doLogout()">Terminar Sessão</button>
+    </div>`;
 }
 
 // ── AUTH & INIT ──
@@ -57,6 +111,9 @@ function initApp() {
     return;
   }
 
+  // Injeta a sidebar (fonte única) antes de usar os seus elementos.
+  renderSidebar();
+
   // Restore theme
   if(localStorage.getItem('dems_theme') === 'light') {
     document.body.classList.add('light-theme');
@@ -71,17 +128,6 @@ function initApp() {
       document.getElementById('userBadge').style.display = 'flex';
     }
   } catch {}
-
-  // Spotlight Effect
-  document.addEventListener('mousemove', e => {
-    document.querySelectorAll('.spotlight').forEach(card => {
-      const rect = card.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      card.style.setProperty('--mouse-x', `${x}px`);
-      card.style.setProperty('--mouse-y', `${y}px`);
-    });
-  });
 
   if (!window.location.pathname.startsWith('/login')) {
     checkHealth();
@@ -131,32 +177,12 @@ async function checkHealth() {
   }
 }
 
-// ── CYBER SCRAMBLE EFFECT ──
-function scrambleText(element, finalString, duration = 1500) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()';
-  let iter = 0;
-  const maxIter = duration / 30;
-  element.classList.add('glitch-text');
-  
-  const interval = setInterval(() => {
-    let current = '';
-    for(let i=0; i<finalString.length; i++) {
-      if(i < (iter / maxIter) * finalString.length) {
-        current += finalString[i];
-      } else {
-        current += chars[Math.floor(Math.random() * chars.length)];
-      }
-    }
-    element.textContent = current;
-    element.setAttribute('data-text', current);
-    iter++;
-    
-    if(iter >= maxIter) {
-      clearInterval(interval);
-      element.textContent = finalString;
-      element.classList.remove('glitch-text');
-    }
-  }, 30);
+// ── Definição de texto (sóbrio — sem efeito "scramble") ──
+// Mantém a assinatura usada pelas páginas, mas escreve o valor de
+// forma direta e legível (hashes lêem-se melhor sem animação).
+function scrambleText(element, finalString) {
+  element.textContent = finalString;
+  element.setAttribute('data-text', finalString);
 }
 
 // ── CRYPTO (DIGITAL SIGNATURES) ──
@@ -209,7 +235,7 @@ async function getPublicKeyHex() {
 
 // ── SCREEN LOCK (INACTIVITY) ──
 let inactivityTimer;
-const LOCK_TIME = 90000; // 90 seconds
+const LOCK_TIME = 5 * 60 * 1000; // 5 minutos de inatividade
 let isLocked = false;
 
 function initScreenLock() {
@@ -220,10 +246,10 @@ function initScreenLock() {
   const lockHtml = `
     <div id="screenLockOverlay" class="screen-lock-overlay">
       <div class="screen-lock-modal">
-        <h2>[ ACESSO BLOQUEADO ]</h2>
-        <p>Inatividade detetada. O terminal foi trancado por segurança. Insira a palavra-passe para reativar a sessão.</p>
-        <input type="password" id="lockPassword" placeholder="PALAVRA-PASSE" onkeydown="if(event.key === 'Enter') unlockScreen()" autocomplete="off">
-        <button onclick="unlockScreen()">DESBLOQUEAR TERMINAL</button>
+        <h2>Sessão bloqueada</h2>
+        <p>A sessão foi bloqueada por inatividade. Introduza a sua palavra-passe para continuar.</p>
+        <input type="password" id="lockPassword" placeholder="Palavra-passe" onkeydown="if(event.key === 'Enter') unlockScreen()" autocomplete="off">
+        <button onclick="unlockScreen()">Desbloquear</button>
       </div>
     </div>
   `;

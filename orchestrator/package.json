@@ -8,7 +8,7 @@
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "dev:local": "cross-env LOCAL_DEV=true PORT=8888 ts-node-dev --respawn --transpile-only --ignore-watch .db src/server.ts",
-    "test": "cross-env TS_NODE_TRANSPILE_ONLY=1 node -r ts-node/register --test src/crypto/blockHash.test.ts src/crypto/nodeIdentity.test.ts src/storage/localStorage.test.ts",
+    "test": "cross-env TS_NODE_TRANSPILE_ONLY=1 node -r ts-node/register --test src/crypto/blockHash.test.ts src/crypto/nodeIdentity.test.ts src/storage/localStorage.test.ts src/routes/auth.http.test.ts src/routes/routes.http.test.ts",
     "test:integration": "cross-env LOCAL_DEV=true TS_NODE_TRANSPILE_ONLY=1 node -r ts-node/register --test --test-timeout=120000 src/services/consensus.integration.test.ts"
   },
   "dependencies": {
@@ -35,8 +35,11 @@
     "@types/multer": "^1.4.11",
     "@types/node": "^20.8.2",
     "@types/pg": "^8.10.2",
+    "@types/supertest": "^7.2.0",
     "cross-env": "^7.0.3",
     "mongodb-memory-server": "^10.1.4",
+    "playwright": "^1.61.0",
+    "supertest": "^7.2.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.2.2"
   }

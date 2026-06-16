@@ -8,3 +8,8 @@ orchestrator/.storage/
 google-key.json
 .DS_Store
 *.log
+
+# Ferramentas de screenshot (visual QA) — não versionar
+shot.js
+.shots/
+.shot-auth.json

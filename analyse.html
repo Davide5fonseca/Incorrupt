@@ -3,121 +3,59 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Incorrupt — Análise Pré-Submissão</title>
+<title>Incorrupt — Análise Prévia</title>
 <link rel="stylesheet" href="/public/theme.css">
-<!-- Chart.js for Entropy visualization -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-.analyse-drop { border: 1px dashed var(--brd-hov); border-radius: 4px; padding: 60px; text-align: center; cursor: pointer; background: rgba(0, 255, 255, 0.02); position: relative; transition: 0.3s; overflow: hidden; }
-.analyse-drop:hover { border-color: var(--acc); background: rgba(0, 255, 255, 0.05); box-shadow: inset 0 0 20px rgba(0, 255, 255, 0.1); }
-.analyse-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 10; }
-.scanning-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: var(--acc); box-shadow: 0 0 10px var(--acc); animation: scan 2s linear infinite; display: none; }
-@keyframes scan { 0% { top: 0; } 50% { top: 100%; } 100% { top: 0; } }
-
-.verdict-banner { border-radius: 4px; padding: 24px; margin-bottom: 24px; display: flex; align-items: flex-start; gap: 16px; border: 1px solid var(--brd); background: rgba(0,0,0,0.5); backdrop-filter: blur(10px); }
-.verdict-banner.ok { border-color: var(--ok); box-shadow: 0 0 15px rgba(0, 255, 170, 0.2); }
-.verdict-banner.warn { border-color: var(--warn); }
-.verdict-banner.err { border-color: var(--err); box-shadow: 0 0 25px rgba(255, 0, 60, 0.4); animation: pulse-err 1.5s infinite; }
-@keyframes pulse-err { 0% { box-shadow: 0 0 25px rgba(255, 0, 60, 0.4); } 50% { box-shadow: 0 0 40px rgba(255, 0, 60, 0.8); border-color: #ff5555; } 100% { box-shadow: 0 0 25px rgba(255, 0, 60, 0.4); } }
-
-.a-card { background: rgba(0,0,0,0.6); border: 1px solid var(--brd); border-radius: 4px; margin-bottom: 24px; }
-.a-card-hdr { padding: 12px 20px; border-bottom: 1px dashed var(--brd); font-size: 13px; font-weight: 700; color: var(--acc); text-transform: uppercase; font-family: 'Orbitron', sans-serif; letter-spacing: 1px; }
-.a-card-body { padding: 20px; }
-.a-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px dashed var(--brd); font-size: 13px; }
-.a-row:last-child { border-bottom: none; }
-.a-row .k { color: var(--muted); text-transform: uppercase; }
-.a-row .v { font-family: 'JetBrains Mono', monospace; color: var(--txt); }
-
-.hex-dump { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); background: #000; padding: 12px; border: 1px solid var(--brd); border-radius: 4px; max-height: 150px; overflow-y: hidden; position: relative; margin-top: 12px; }
-.hex-dump::after { content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 40px; background: linear-gradient(transparent, #000); }
+  .drop-zone { border: 1px dashed var(--brd-hov); border-radius: var(--radius); padding: 48px; text-align: center; cursor: pointer; transition: .15s; position: relative; background: var(--bg-soft); }
+  .drop-zone:hover { border-color: var(--acc); }
+  .drop-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop-zone svg { color: var(--muted); margin-bottom: 14px; }
+  .result-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .result-head h3 { font-size: 15px; font-weight: 600; }
+  .signal { padding: 10px 12px; background: var(--sur2); border-left: 2px solid var(--muted); border-radius: 0 6px 6px 0; margin-bottom: 8px; font-size: 12.5px; }
+  .signal b { font-family: var(--mono); font-size: 11px; margin-right: 6px; }
 </style>
 </head>
 <body>
-<aside class="sidebar">
-  <div class="brand">
-    <div class="brand-inner">
-      <div class="logo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
-      <h1>Incorrupt</h1>
-    </div>
-    <button class="theme-toggle" onclick="toggleTheme()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-  <div class="nav-lbl">Dashboard</div>
-  <div class="nav">
-    <a href="/" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Upload</a>
-    <a href="/explorer" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg> Blockchain</a>
-  </div>
-  <div class="nav-lbl">Forense</div>
-  <div class="nav">
-    <a href="/verify" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Verificar Prova</a>
-    <a href="/analyse" class="nav-btn active"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Análise Prévia</a>
-    <a href="/custody" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M15 14l-3 3-3-3"/><path d="M12 17V9"/></svg> Gestão de Custódia</a>
-    <a href="/terminal" class="nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal OS</a>
-    <a href="/chaos" class="nav-btn" style="color:#ff4444;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> Simulador de Ataque</a>
-  </div>
-  <div class="sb-footer spotlight">
-    <div class="user-badge" id="userBadge" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> <span id="userBadgeText"></span></div>
-    <div class="badge off" id="serverBadge"><div class="dot"></div> <span id="serverStatus">A carregar...</span></div>
-    <button class="btn-logout" onclick="doLogout()">Terminar Sessão</button>
-  </div>
-</aside>
+<aside class="sidebar" id="sidebar"></aside>
 
 <main class="main">
   <div class="topbar">
-    <h2>Motor de Análise Forense</h2>
-    <div class="bft-tag">BFT CONSENSUS ACTIVE</div>
+    <h2>Análise Prévia</h2>
+    <div class="bft-tag">Consenso BFT</div>
   </div>
 
   <div class="scroll-area">
-    <div class="panel spotlight">
-      <div class="panel-hdr">Extração de Metadados e Sinais de Adulteração</div>
+    <p class="page-desc">Analise um ficheiro antes de o submeter: calcula o SHA-256, verifica se já consta da cadeia e procura indícios nos metadados. Os indícios são heurística — indício, não prova.</p>
+
+    <div class="panel">
+      <div class="panel-hdr">Analisar ficheiro</div>
       <div class="panel-body">
-        
-        <div class="analyse-drop" id="analyseDropZone">
-          <div class="scanning-overlay" id="scanOverlay"></div>
+        <div class="drop-zone" id="dropZone">
           <input type="file" id="analyseFile" onchange="doAnalyse(this.files[0])">
-          <svg id="dropIcon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--acc)" stroke-width="1.5" style="margin-bottom:16px; filter: drop-shadow(0 0 5px var(--acc))"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <h3 id="dropTitle" style="font-family:'Orbitron', sans-serif; letter-spacing:1px; color:var(--txt)">INICIAR ANÁLISE FORENSE</h3>
-          <p id="dropSub" style="color:var(--muted); font-size:13px; margin-top:8px">Arraste um ficheiro para varrimento</p>
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <h3 style="font-weight:600">Selecionar ou largar ficheiro</h3>
+          <p class="muted" style="font-size:13px; margin-top:6px">PDF, imagem ou qualquer ficheiro.</p>
         </div>
 
-        <div id="analyseResult" style="display: none; margin-top: 24px;">
-          <div class="verdict-banner" id="verdictBanner">
-            <div>
-              <h3 id="verdictTitle" style="font-size:16px; margin-bottom:8px"></h3>
-              <p id="verdictDetail" style="font-size:14px; color:var(--muted)"></p>
-            </div>
+        <div id="result" style="display:none; margin-top:22px">
+          <div class="result-head">
+            <span class="pill" id="vPill">—</span>
+            <h3 id="vTitle"></h3>
           </div>
+          <p class="muted" id="vDetail" style="font-size:13px; margin-bottom:18px"></p>
 
           <div class="grid-2">
-            <div>
-              <div class="a-card">
-                <div class="a-card-hdr">Assinatura SHA-256 e Info</div>
-                <div class="a-card-body">
-                  <div class="a-row"><span class="k">SHA-256</span><span class="v" id="analyseHashDisplay" style="color:var(--acc)"></span></div>
-                  <div class="a-row"><span class="k">Ficheiro</span><span class="v" id="aFileName"></span></div>
-                </div>
-              </div>
+            <div class="panel" style="margin:0">
+              <div class="panel-hdr">Ficheiro</div>
+              <div class="panel-body"><div class="kv-list" id="fileRows"></div></div>
             </div>
-            <div>
-              <div class="a-card">
-                <div class="a-card-hdr">Anomalias Detectadas</div>
-                <div class="a-card-body" id="aSignalsBody"></div>
-              </div>
-            </div>
-          </div>
-          </div>
-
-          <div style="margin-top: 24px;">
-            <div class="a-card">
-              <div class="a-card-hdr">RAIO-X DE ENTROPIA FORENSE (SHANNON)</div>
-              <div class="a-card-body" style="height: 250px; position: relative;">
-                <canvas id="entropyChart"></canvas>
-                <div id="entropyVerdict" style="position: absolute; top: 10px; right: 20px; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold; padding: 4px 8px; border-radius: 4px;"></div>
-              </div>
+            <div class="panel" style="margin:0">
+              <div class="panel-hdr">Indícios nos metadados</div>
+              <div class="panel-body" id="signalsBody"></div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   </div>
@@ -125,172 +63,69 @@
 
 <script src="/public/app.js"></script>
 <script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+const STATUS_UI = {
+  NEVER_SEEN:         { cls: 'ok',   pill: 'Novo' },
+  ALREADY_REGISTERED: { cls: '',     pill: 'Já registado' },
+  MODIFIED_SUSPECTED: { cls: 'warn', pill: 'A rever' },
+};
+const SEV = {
+  info:     { color: 'var(--muted)', label: 'INFO' },
+  suspeito: { color: 'var(--warn)',  label: 'REVER' },
+  forte:    { color: 'var(--err)',   label: 'ALERTA' },
+};
+
 async function doAnalyse(file) {
-  if(!file) return;
-  const resultDiv = document.getElementById('analyseResult');
-  const overlay = document.getElementById('scanOverlay');
-  const dropTitle = document.getElementById('dropTitle');
-  const dropSub = document.getElementById('dropSub');
-  const dropIcon = document.getElementById('dropIcon');
-  
-  resultDiv.style.display = 'none';
-  overlay.style.display = 'block';
-  dropTitle.textContent = 'A EXECUTAR VARRIMENTO...';
-  dropSub.textContent = 'A extrair metadados e calcular assinaturas cryptográficas.';
-  dropIcon.style.stroke = 'var(--acc)';
-  
-  const form = new FormData(); form.append('file', file);
-  
-  // Calculate Shannon Entropy
-  const buffer = await file.arrayBuffer();
-  const view = new Uint8Array(buffer);
-  
-  // Adaptive chunking to prevent math caps on very small files (min 256 bytes per chunk if possible)
-  let chunksCount = 50;
-  if (view.length < 256) chunksCount = 1;
-  else if (view.length / chunksCount < 256) chunksCount = Math.floor(view.length / 256);
-  if (chunksCount < 1) chunksCount = 1;
-  
-  const chunkSize = Math.ceil(view.length / chunksCount);
-  const entropyData = [];
-  let avgEntropy = 0;
-  
-  for (let i = 0; i < chunksCount; i++) {
-    const start = i * chunkSize;
-    if (start >= view.length) break;
-    const end = Math.min(start + chunkSize, view.length);
-    const slice = view.subarray(start, end);
-    
-    const counts = new Array(256).fill(0);
-    for (let j = 0; j < slice.length; j++) {
-      counts[slice[j]]++;
-    }
-    
-    let entropy = 0;
-    for (let j = 0; j < 256; j++) {
-      const p = counts[j] / slice.length;
-      if (p > 0) entropy -= p * Math.log2(p);
-    }
-    entropyData.push(entropy);
-    avgEntropy += entropy;
-  }
-  if(entropyData.length > 0) avgEntropy /= entropyData.length;
-  
-  // Simulate scan delay for dramatic effect
-  await new Promise(r => setTimeout(r, 1500));
-  
+  if (!file) return;
+  const result = document.getElementById('result');
+  const dropZone = document.getElementById('dropZone');
+  dropZone.querySelector('h3').textContent = 'A analisar…';
+  result.style.display = 'none';
+
+  const form = new FormData();
+  form.append('file', file);
+
   try {
-    const resp = await fetch('http://localhost:8888/api/v1/analyse', { method:'POST', body: form });
-    const d = await resp.json();
-    
-    overlay.style.display = 'none';
-    resultDiv.style.display = 'block';
-    dropTitle.textContent = 'ANÁLISE CONCLUÍDA';
-    dropSub.textContent = 'Pode largar outro ficheiro para nova análise.';
-    dropIcon.style.stroke = 'var(--muted)';
-    
-    const banner = document.getElementById('verdictBanner');
-    banner.className = 'verdict-banner';
-    let isError = false;
-    
-    if(d.status === 'NEVER_SEEN') banner.classList.add('ok');
-    else if(d.status === 'ALREADY_REGISTERED') banner.classList.add('info');
-    else banner.classList.add('warn'); // MODIFIED_SUSPECTED: indícios a rever, não certeza
-    
-    const titleEl = document.getElementById('verdictTitle');
-    titleEl.textContent = d.verdict || d.status;
-    if(isError) titleEl.classList.add('glitch-text'); else titleEl.classList.remove('glitch-text');
-    titleEl.setAttribute('data-text', titleEl.textContent);
-    
-    document.getElementById('verdictDetail').textContent = d.verdictDetail || '';
-    
+    const d = await (await fetch('/api/v1/analyse', { method: 'POST', body: form })).json();
     const a = d.analysis || {};
-    document.getElementById('aFileName').textContent = file.name;
-    
-    const hashEl = document.getElementById('analyseHashDisplay');
-    scrambleText(hashEl, a.fileHash || '—', 1500);
-    
-    // Usa os sinais estruturados (com severidade) quando disponíveis;
-    // senão cai para a lista de mensagens (retrocompat).
+
+    dropZone.querySelector('h3').textContent = 'Selecionar ou largar ficheiro';
+    result.style.display = 'block';
+
+    const ui = STATUS_UI[d.status] || { cls: '', pill: d.status };
+    const pill = document.getElementById('vPill');
+    pill.className = 'pill ' + ui.cls;
+    pill.textContent = ui.pill;
+    document.getElementById('vTitle').textContent = d.verdict || '';
+    document.getElementById('vDetail').textContent = d.verdictDetail || '';
+
+    // Ficheiro
+    const rows = [
+      ['SHA-256', a.fileHash],
+      ['Nome', a.fileName],
+      ['Tamanho', (a.fileSize ?? 0) + ' bytes'],
+      ['Tipo', a.mimeType || '—'],
+    ];
+    if (a.foundInChain) rows.push(['Na cadeia', `${a.chainOccurrences}× registado`]);
+    document.getElementById('fileRows').innerHTML = rows
+      .map(([k, v]) => `<div class="kv-row"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
+
+    // Indícios
     const details = (a.signalDetails && a.signalDetails.length)
       ? a.signalDetails
       : (a.suspicionSignals || []).map(s => ({ severity: 'suspeito', message: s }));
-
-    const SEV = {
-      info:     { color: 'var(--muted)', label: 'INFO'  },
-      suspeito: { color: 'var(--warn)',  label: 'REVER' },
-      forte:    { color: 'var(--err)',   label: 'ALERTA'},
-    };
-
-    const signalsHtml = details.length
+    document.getElementById('signalsBody').innerHTML = details.length
       ? details.map(s => {
           const sv = SEV[s.severity] || SEV.suspeito;
-          return `<div style="color:${sv.color}; padding:8px; background:rgba(255,255,255,0.03); border-left: 2px solid ${sv.color}; border-radius:0 4px 4px 0; margin-bottom:8px; font-family:'JetBrains Mono'; font-size:12px;"><b>[${sv.label}]</b> ${s.message}</div>`;
+          return `<div class="signal" style="border-left-color:${sv.color}; color:${sv.color}"><b>[${sv.label}]</b><span style="color:var(--txt-dim)">${esc(s.message)}</span></div>`;
         }).join('')
-      : '<div style="color:var(--ok);font-size:13px; font-family:\'JetBrains Mono\'">> STATUS: SEM INDÍCIOS RELEVANTES NOS METADADOS.</div>';
+      : '<div class="empty" style="padding:20px">Sem indícios relevantes nos metadados.</div>';
 
-    document.getElementById('aSignalsBody').innerHTML = signalsHtml;
-    
-    // Render Entropy Chart
-    const ctx = document.getElementById('entropyChart').getContext('2d');
-    if (window.entropyChartInstance) window.entropyChartInstance.destroy();
-    
-    const isEncrypted = avgEntropy > 7.8;
-    const chartColor = isEncrypted ? 'rgba(255, 0, 60, 1)' : 'rgba(0, 255, 255, 1)';
-    const chartBg = isEncrypted ? 'rgba(255, 0, 60, 0.2)' : 'rgba(0, 255, 255, 0.2)';
-    
-    const verdictEl = document.getElementById('entropyVerdict');
-    if (isEncrypted) {
-        verdictEl.textContent = `AVISO: ENTROPIA ALTA (${avgEntropy.toFixed(2)}) - POSSÍVEL ENCRIPTAÇÃO/ESTEGANOGRAFIA`;
-        verdictEl.style.color = 'var(--err)';
-        verdictEl.style.background = 'rgba(255,0,60,0.1)';
-        verdictEl.classList.add('glitch-text');
-    } else {
-        verdictEl.textContent = `STATUS: ENTROPIA NORMAL (${avgEntropy.toFixed(2)})`;
-        verdictEl.style.color = 'var(--ok)';
-        verdictEl.style.background = 'rgba(0,255,170,0.1)';
-        verdictEl.classList.remove('glitch-text');
-    }
-    
-    window.entropyChartInstance = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: entropyData.map((_, i) => `Ch #${i+1}`),
-        datasets: [{
-          label: 'Shannon Entropy (Bits)',
-          data: entropyData,
-          borderColor: chartColor,
-          backgroundColor: chartBg,
-          borderWidth: 2,
-          pointRadius: 1,
-          pointBackgroundColor: chartColor,
-          fill: true,
-          tension: 0.3
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { 
-            beginAtZero: true, 
-            max: 8.0, 
-            grid: { color: 'rgba(255, 255, 255, 0.05)' },
-            ticks: { color: chartColor, font: {family: 'Orbitron'} }
-          },
-          x: { 
-            grid: { display: false },
-            ticks: { color: 'var(--muted)', font: {family: 'Orbitron', size: 9} }
-          }
-        }
-      }
-    });
-      
-    showToast('Análise Completa', 'Relatório gerado com sucesso.', 'success');
-  } catch(e) {
-    overlay.style.display = 'none';
-    showToast('Erro de Análise', e.message, 'error');
+    showToast('Análise concluída', d.verdict || '', d.status === 'MODIFIED_SUSPECTED' ? 'error' : 'success');
+  } catch (e) {
+    dropZone.querySelector('h3').textContent = 'Selecionar ou largar ficheiro';
+    showToast('Erro', e.message, 'error');
   }
 }
 </script>

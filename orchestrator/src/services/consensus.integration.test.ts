@@ -9,6 +9,8 @@
 // ============================================================
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'fs';
+import path from 'path';
 
 process.env.LOCAL_DEV = 'true';
 
@@ -24,7 +26,13 @@ function entry(name: string, hash: string) {
     };
 }
 
-before(async () => { await consensusManager.initialise(); });
+before(async () => {
+    // Isolamento: arranca sempre de uma cadeia vazia. Os últimos testes
+    // adulteram a cadeia de propósito e persistem em .db/ — sem isto, a
+    // 2.ª execução arrancaria a partir desse estado sujo.
+    fs.rmSync(path.join(process.cwd(), '.db'), { recursive: true, force: true });
+    await consensusManager.initialise();
+});
 after(async () => { await consensusManager.shutdown(); });
 
 test('commit gera bloco com quorum certificate válido (>=3 nós)', async () => {
