@@ -121,6 +121,11 @@ divergente e ausência de colisão de `blockIndex` em commits concorrentes.
   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"  # ENCRYPTION_KEY
   ```
 - As chaves privadas dos nós ficam em `orchestrator/.keys/` (ignorado pelo git).
+- **Controlo de acesso à cadeia.** `GET /api/v1/chain/blocks` e `/block/:hash` filtram
+  por papel: **Admin** e **Juiz** (supervisão) veem todos os blocos; os restantes só
+  veem blocos em que estão envolvidos — como autor da ação, ou como parte da cadeia de
+  custódia desse ficheiro (autor de upload/transferência, remetente ou destinatário).
+  A verificação pública (`/verify-file`) mantém-se aberta, mas exige posse do ficheiro.
 
 ---
 

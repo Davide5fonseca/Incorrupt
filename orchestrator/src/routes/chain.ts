@@ -11,9 +11,9 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { authenticateToken, requireRole } from '../middleware/auth';
+import { authenticateToken, requireRole, AuthenticatedUser } from '../middleware/auth';
 import { validateBody, sha256Hex } from '../middleware/validate';
-import { consensusManager } from '../services/consensusManager';
+import { consensusManager, BlockSummary } from '../services/consensusManager';
 import { extractPdfMetadata, extractImageMetadata } from './analyse';
 
 const auditLogSchema = z.object({
@@ -27,6 +27,50 @@ const auditLogSchema = z.object({
 // Roles with read access to the chain explorer
 const CHAIN_READERS = ['Investigador', 'Perito', 'Juiz', 'Admin', 'Utilizador'] as const;
 
+// ── Controlo de acesso à cadeia ───────────────────────────────
+// Admin e Juiz são papéis de supervisão: veem todos os blocos. Os
+// restantes só veem blocos em que estão ENVOLVIDOS — como autor da
+// ação, ou como parte da cadeia de custódia desse ficheiro (autor de
+// upload/transferência, remetente ou destinatário).
+const PRIVILEGED_ROLES = ['Admin', 'Juiz'];
+
+function isPrivileged(user: AuthenticatedUser): boolean {
+    return PRIVILEGED_ROLES.includes(user.role);
+}
+
+// fileHash → conjunto de emails envolvidos nessa prova.
+function buildInvolvement(blocks: BlockSummary[]): Map<string, Set<string>> {
+    const involved = new Map<string, Set<string>>();
+    for (const b of blocks) {
+        if (!b.fileHash || b.fileHash === 'LEGACY') continue;
+        let set = involved.get(b.fileHash);
+        if (!set) { set = new Set<string>(); involved.set(b.fileHash, set); }
+        if (b.actorEmail) set.add(b.actorEmail);
+        if (b.action === 'CUSTODY_TRANSFER') {
+            try {
+                const m = JSON.parse(b.metadata);
+                if (m.to) set.add(m.to);
+                if (m.from) set.add(m.from);
+            } catch { /* metadata não-JSON */ }
+        }
+    }
+    return involved;
+}
+
+function canSee(b: BlockSummary, user: AuthenticatedUser, involved: Map<string, Set<string>>): boolean {
+    if (isPrivileged(user)) return true;
+    if (b.actorEmail === user.email) return true;
+    const set = involved.get(b.fileHash);
+    return !!(set && set.has(user.email));
+}
+
+// Filtra uma lista de blocos para o que o utilizador pode ver.
+export function visibleBlocksFor(blocks: BlockSummary[], user: AuthenticatedUser): BlockSummary[] {
+    if (isPrivileged(user)) return blocks;
+    const involved = buildInvolvement(blocks);
+    return blocks.filter(b => canSee(b, user, involved));
+}
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 export function createChainRouter(): Router {
@@ -39,11 +83,19 @@ export function createChainRouter(): Router {
     router.get('/blocks', authenticateToken, requireRole(...CHAIN_READERS), async (req: Request, res: Response) => {
         try {
             const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
-            const blocks = await consensusManager.getBlocks(0, limit);
+            const user  = req.user!;
+
+            // Busca alargada e filtra por visibilidade ANTES de aplicar o
+            // limite, para que o utilizador receba os seus blocos mesmo que
+            // não estejam entre os mais recentes globais.
+            const all = await consensusManager.getBlocks(0, 1000);
+            const visible = visibleBlocksFor(all, user);
+            const blocks = visible.slice(0, limit);
 
             return res.status(200).json({
-                status:      'OK',
+                status:       'OK',
                 totalFetched: blocks.length,
+                totalVisible: visible.length,
                 blocks,
             });
         } catch (err: any) {
@@ -58,6 +110,16 @@ export function createChainRouter(): Router {
             const block = await consensusManager.getBlockByHash(req.params.hash);
             if (!block) {
                 return res.status(404).json({ error: 'BlockNotFound', message: 'Nenhum bloco com esse hash.' });
+            }
+            // Controlo de acesso: calcula o envolvimento a partir de todos
+            // os blocos do mesmo ficheiro antes de decidir.
+            const user = req.user!;
+            if (!isPrivileged(user)) {
+                const related = await consensusManager.findAllBlocksByFileHash(block.fileHash);
+                const involved = buildInvolvement(related.length ? related : [block]);
+                if (!canSee(block, user, involved)) {
+                    return res.status(403).json({ error: 'Forbidden', message: 'Sem acesso a este bloco.' });
+                }
             }
             return res.status(200).json({ status: 'OK', block });
         } catch (err: any) {
