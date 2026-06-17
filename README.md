@@ -1,5 +1,7 @@
 # Incorrupt — Cadeia de Custódia Digital (DEMS)
 
+[![CI](https://github.com/Davide5fonseca/Incorrupt/actions/workflows/ci.yml/badge.svg)](https://github.com/Davide5fonseca/Incorrupt/actions/workflows/ci.yml)
+
 Plataforma de gestão de prova forense digital. Cada ficheiro de prova é
 registado numa cadeia de blocos encadeada por hash, replicada e **certificada
 por um conjunto de nós de auditoria independentes**. O objetivo é provar, a

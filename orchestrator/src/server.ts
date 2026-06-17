@@ -191,6 +191,9 @@ function setupRoutes(pgPool: Pool | null) {
 
     // ── Frontend (Multi-page routes) ──
     app.get('/', (_req, res) => {
+        res.sendFile(path.resolve(__dirname, '../../dashboard.html'));
+    });
+    app.get('/upload', (_req, res) => {
         res.sendFile(path.resolve(__dirname, '../../upload.html'));
     });
     app.get('/explorer', (_req, res) => {

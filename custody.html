@@ -89,10 +89,13 @@ async function loadCustody() {
     list.innerHTML = myItems.map(o => `
       <div class="panel" style="margin-bottom:12px">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; padding:14px 18px">
-          <div style="min-width:0">
-            <div style="font-weight:600; margin-bottom:5px">${esc(o.fileName)}</div>
-            <div class="hash">${esc(o.hash)}</div>
-            <div class="muted" style="font-size:12px; margin-top:6px">Sob a sua custódia desde ${new Date(o.ts).toLocaleString('pt-PT')}</div>
+          <div style="display:flex; gap:14px; align-items:center; min-width:0">
+            <div class="act-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+            <div style="min-width:0">
+              <div style="font-weight:600; margin-bottom:5px">${esc(o.fileName)}</div>
+              <div class="hash">${esc(o.hash)}</div>
+              <div class="muted" style="font-size:12px; margin-top:6px">Sob a sua custódia desde ${new Date(o.ts).toLocaleString('pt-PT')}</div>
+            </div>
           </div>
           <button class="btn-sm" onclick="openTransferModal('${o.hash}')">Transferir custódia</button>
         </div>
